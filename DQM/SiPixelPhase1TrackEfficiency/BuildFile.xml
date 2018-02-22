@@ -1,5 +1,7 @@
 <use   name="DQM/SiPixelPhase1Common"/>
 <use   name="DataFormats/TrackerRecHit2D"/>
 <use   name="TrackingTools/TrackFitters"/>
-
+<use   name="TrackingTools/TrackRefitter"/>
+<use   name="TrackingTools/PatternTools"/>
+<use   name="TrackingTools/TrajectoryState"/>
 <flags   EDM_PLUGIN="1"/>

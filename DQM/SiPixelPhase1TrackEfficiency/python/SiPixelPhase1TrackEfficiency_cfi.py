@@ -136,7 +136,15 @@ SiPixelPhase1TrackEfficiencyAnalyzer = DQMEDAnalyzer('SiPixelPhase1TrackEfficien
         primaryvertices = cms.InputTag("offlinePrimaryVertices"),
         histograms = SiPixelPhase1TrackEfficiencyConf,
         geometry = SiPixelPhase1Geometry,
-        triggerflags = trigger.SiPixelPhase1Triggers
+        triggerflags = trigger.SiPixelPhase1Triggers,
+	DoPredictionsOnly = cms.bool(False),
+        Fitter = cms.string('KFFitterForRefitInsideOut'),
+        TrackerRecHitBuilder = cms.string('WithAngleAndTemplate'),
+        Smoother = cms.string('KFSmootherForRefitInsideOut'),
+        MuonRecHitBuilder = cms.string('MuonRecHitBuilder'),
+        RefitDirection = cms.string('oppositeToMomentum'),
+        RefitRPCHits = cms.bool(True),
+        Propagator = cms.string('SmartPropagatorAnyRKOpposite')
 )
 
 SiPixelPhase1TrackEfficiencyHarvester = DQMEDHarvester("SiPixelPhase1Harvester",

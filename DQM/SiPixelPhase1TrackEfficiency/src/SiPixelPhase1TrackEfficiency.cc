@@ -23,6 +23,10 @@
 #include "DataFormats/TrackerRecHit2D/interface/SiPixelRecHit.h"
 #include "DataFormats/VertexReco/interface/Vertex.h"
 #include "DataFormats/VertexReco/interface/VertexFwd.h"
+#include "TrackingTools/TrackRefitter/interface/TrackTransformer.h"
+#include "TrackingTools/PatternTools/interface/Trajectory.h"
+#include "RecoTracker/MeasurementDet/interface/MeasurementTrackerEvent.h"
+#include "TrackingTools/TrajectoryState/interface/FreeTrajectoryState.h" 
 
 namespace {
 
@@ -43,19 +47,22 @@ class SiPixelPhase1TrackEfficiency final : public SiPixelPhase1Base {
   edm::EDGetTokenT<edmNew::DetSetVector<SiPixelCluster> > clustersToken_;
   edm::EDGetTokenT<reco::TrackCollection> tracksToken_;
   edm::EDGetTokenT<reco::VertexCollection> vtxToken_;
-
+  TrackTransformer refitter_;
   bool applyVertexCut_;
   
 };
 
 SiPixelPhase1TrackEfficiency::SiPixelPhase1TrackEfficiency(const edm::ParameterSet& iConfig) :
-  SiPixelPhase1Base(iConfig) 
+ 
+ SiPixelPhase1Base(iConfig),
+ refitter_(iConfig) 
 { 
   tracksToken_ = consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("tracks"));
   vtxToken_ = consumes<reco::VertexCollection>(iConfig.getParameter<edm::InputTag>("primaryvertices"));
   applyVertexCut_=iConfig.getUntrackedParameter<bool>("VertexCut",true);
-
+   
 }
+ 
 
 void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup) {
   if( !checktrigger(iEvent,iSetup,DCS) ) return;
@@ -68,6 +75,8 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
   // get primary vertex
   edm::Handle<reco::VertexCollection> vertices;
   iEvent.getByToken( vtxToken_, vertices);
+ 
+  refitter_.setServices(iSetup);
 
   if (!vertices.isValid()) return;
 
@@ -84,6 +93,36 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
   if (!tracks.isValid()) return;
 
   for (auto const & track : *tracks) {
+    std::vector<Trajectory> traj  = refitter_.transform(track);
+    if (traj.size() != 1) continue; 
+
+    TrajectoryStateOnSurface tsosPXB2;
+    for (const auto &tm : traj.front().measurements()) {
+            if (tm.recHit().get() && tm.recHitR().isValid()) {
+                tsosPXB2 = tm.updatedState().isValid() ? tm.updatedState() : tm.backwardPredictedState();
+							//DetId where = tm.recHitR().geographicalId();
+                //source_det_ = where.subdetId();
+                //source_layer_ = theTrkTopo->layer(where);
+                //if (source_det_ != PixelSubdetector::SubDetector::PixelBarrel ||  source_layer_ != 1) {
+                //    tsosPXB2 = tm.updatedState().isValid() ? tm.updatedState() : tm.backwardPredictedState();
+                //    if (debug_) printf("starting state on det %d, layer %d, r = %5.1f, z = %+6.1f\n", 
+                 //                       source_det_, source_layer_, tsosPXB2.globalPosition().perp(), tsosPXB2.globalPosition().z());
+                  //  break;
+                //}
+            }
+        }
+
+//    const GeometricSearchTracker * gst = tracker->geometricSearchTracker();
+        //const auto & PXBLs = gst->pixelBarrelLayers();
+        //        //for (const auto * PXBLayer : PXBLs) { std::cout << "PXB Layer with radius = " << PXBLayer->specificSurface().radius() << std::endl; }
+  //  const auto *pxbLayer1 = gst->pixelBarrelLayers().front();
+   // auto compDets = pxbLayer1->compatibleDets(tsosPXB2, *thePropagatorOpposite, *theEstimator);
+    
+   // for (const auto & detAndState : compDets) {
+
+//	const auto & tkpos = detAndState.second.localPosition();
+    //    const auto & tkerr = detAndState.second.localError().positionError();
+  //    }
 
     //this cut is needed to be consisten with residuals calculation
     if (applyVertexCut_ && (track.pt() < 0.75 || std::abs( track.dxy(vertices->at(0).position()) ) > 5*track.dxyError())) continue; 
