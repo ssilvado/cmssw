@@ -24,6 +24,8 @@
 #include "DataFormats/VertexReco/interface/Vertex.h"
 #include "DataFormats/VertexReco/interface/VertexFwd.h"
 
+#include "DataFormats/SiPixelDetId/interface/PXBDetId.h"
+
 namespace {
 
 class SiPixelPhase1TrackEfficiency final : public SiPixelPhase1Base {
@@ -115,18 +117,126 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
 
     if (!isBpixtrack && !isFpixtrack) continue;
 
+    //check all the hits
+    std::vector< bool > SubDetCheckerBool = {false, false, false, false, false, false, false};
+
+    for(unsigned int h=0;h<track.recHitsSize();h++){ ///check the location of all the hits
+      auto hit = *(hb+h);
+      DetId id = hit->geographicalId();
+
+      bool isHitValid   = hit->getType()==TrackingRecHit::valid;
+      if (isHitValid){
+      if (id() >= 303042564 && id() <= 303087648) SubDetCheckerBool.at(0) = true;  //Layer1               
+      if (id() >= 304091140 && id() <= 304201760) SubDetCheckerBool.at(1) = true;  //Layer2                                                                       
+      if (id() >= 305139716 && id() <= 305315872) SubDetCheckerBool.at(2) = true;  //Layer3                                                                      
+      if (id() >= 306188292 && id() <= 306446368) SubDetCheckerBool.at(3) = true;  //Layer4                                                     
+      if ((id() >= 344200196 && id() <= 344426500) || (id() >= 352588804 && id() <= 352815108)) SubDetCheckerBool.at(4) = true;  //Disk1       
+      if ((id() >= 344462340 && id() <= 344688644) || (id() >= 352588804 && id() <= 352815108)) SubDetCheckerBool.at(5) = true;  //Disk2                     
+      if ((id() >= 344724484 && id() <= 344950788) || (id() >= 353113092 && id() <= 353339396)) SubDetCheckerBool.at(6) = true;  //Disk3                          
+      }
+    }
+
+
     // then, look at each hit
     for(unsigned int h=0;h<track.recHitsSize();h++){
       auto hit = *(hb+h);
 
       DetId id = hit->geographicalId();
       uint32_t subdetid = (id.subdetId());
+
+      //Check the location of this hit
+      std::vector< bool > hitCheckerBool = {false, false, false, false, false, false, false};
+
+      if (id() >= 303042564 && id() <= 303087648) hitCheckerBool.at(0) = true;
+      if (id() >= 304091140 && id() <= 304201760) hitCheckerBool.at(1) = true;
+      if (id() >= 305139716 && id() <= 305315872) hitCheckerBool.at(2) = true;
+      if (id() >= 306188292 && id() <= 306446368) hitCheckerBool.at(3) = true;
+      if ((id() >= 344200196 && id() <= 344426500) || (id() >= 352588804 && id() <= 352815108)) hitCheckerBool.at(4) = true;  //Disk1                       
+      if ((id() >= 344462340 && id() <= 344688644) || (id() >= 352588804 && id() <= 352815108)) hitCheckerBool.at(5) = true;  //Disk2                        
+      if ((id() >= 344724484 && id() <= 344950788) || (id() >= 353113092 && id() <= 353339396)) hitCheckerBool.at(6) = true;  //Disk3                          
+
+
+
       if (   subdetid != PixelSubdetector::PixelBarrel 
           && subdetid != PixelSubdetector::PixelEndcap) continue;
 
       bool isHitValid   = hit->getType()==TrackingRecHit::valid;
       bool isHitMissing = hit->getType()==TrackingRecHit::missing;
       bool isHitInactive = hit->getType()==TrackingRecHit::inactive;
+
+      // Hp cut
+      int TRACK_QUALITY_HIGH_PURITY_BIT = 2;
+      int TRACK_QUALITY_HIGH_PURITY_MASK = 1 << TRACK_QUALITY_HIGH_PURITY_BIT;
+      if(!((track.qualityMask() & TRACK_QUALITY_HIGH_PURITY_MASK) >> TRACK_QUALITY_HIGH_PURITY_BIT)) 
+	{
+	  isHitValid = false;
+
+	}
+
+      //Pt cut
+      float TRACK_PT_CUT_VAL = 1.0f;
+      if(!(TRACK_PT_CUT_VAL < track.pt()))
+	{
+	  isHitValid = false;
+
+	}
+
+      //Nstrip cut
+      int TRACK_NSTRIP_CUT_VAL = 10;
+      if(!(TRACK_NSTRIP_CUT_VAL < nStripHits))
+	{
+	  isHitValid = false;
+
+	}
+
+      //Apply pixel hit cuts
+      if (hitCheckerBool.at(0) == true) if (!( //layer1
+      					      (SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(3) == true) ||
+      					      (SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(4) == true) || 
+      					      (SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true) ||
+                                              (SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true && SubDetCheckerBool.at(6) == true)))
+      					  {
+					    isHitValid = false;
+      					  }
+      if (hitCheckerBool.at(1) == true) if (!( //layer2                                                                                   
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(3) == true) ||
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(4) == true) ||
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true)))
+      					  {
+      					    isHitValid = false;
+      					  }
+      if (hitCheckerBool.at(3) == true) if (!( //layer3                                                                                                            
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(3) == true) ||
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(4) == true)))
+                                          {
+					    isHitValid = false;
+                                          }
+
+      if (hitCheckerBool.at(3) == true) if (!( //layer4                                                                                                           
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true)))
+					  {
+					    isHitValid = false;
+                                          }
+
+      if (hitCheckerBool.at(4) == true) if (!( //Disk1                                                                                                            
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true) ||
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(5) == true) ||
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(5) == true && SubDetCheckerBool.at(6) == true)))
+                                          {
+                                            isHitValid = false;
+                                          }
+      if (hitCheckerBool.at(5) == true) if (!( //Disk2                                                                                                            
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(1) == true) ||
+                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(6) == true)))
+                                          {
+					    isHitValid = false;
+                                          }
+      if (hitCheckerBool.at(6) == true) if (!( //Disk3                                                                                                    
+      					      (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true)))
+                                          {
+					    isHitValid = false;
+                                          }
+
 
       /*
       const SiPixelRecHit* pixhit = dynamic_cast<const SiPixelRecHit*>(hit);
