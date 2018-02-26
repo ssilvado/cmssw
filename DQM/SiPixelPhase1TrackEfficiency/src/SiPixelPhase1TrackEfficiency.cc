@@ -23,7 +23,15 @@
 #include "DataFormats/TrackerRecHit2D/interface/SiPixelRecHit.h"
 #include "DataFormats/VertexReco/interface/Vertex.h"
 #include "DataFormats/VertexReco/interface/VertexFwd.h"
+#include "TrackingTools/PatternTools/interface/TrajTrackAssociation.h"
+#include "TrackingTools/TrajectoryState/interface/FreeTrajectoryState.h" 
+#include "RecoTracker/MeasurementDet/interface/MeasurementTrackerEvent.h"
+#include "TrackingTools/KalmanUpdators/interface/Chi2MeasurementEstimatorBase.h"
+#include "TrackingTools/Records/interface/TrackingComponentsRecord.h"
 
+#include "TrackingTools/KalmanUpdators/interface/Chi2MeasurementEstimator.h"
+#include "TrackingTools/GeomPropagators/interface/Propagator.h"
+#include "DataFormats/TrackerCommon/interface/TrackerTopology.h"
 #include "DataFormats/SiPixelDetId/interface/PXBDetId.h"
 
 namespace {
@@ -44,19 +52,31 @@ class SiPixelPhase1TrackEfficiency final : public SiPixelPhase1Base {
   private:
   edm::EDGetTokenT<edmNew::DetSetVector<SiPixelCluster> > clustersToken_;
   edm::EDGetTokenT<reco::TrackCollection> tracksToken_;
-  edm::EDGetTokenT<reco::VertexCollection> vtxToken_;
-
+  edm::EDGetTokenT<reco::VertexCollection> vtxToken_; 
+  edm::EDGetTokenT<TrajTrackAssociationCollection>  trajTrackCollectionToken_;  
+  edm::EDGetTokenT<MeasurementTrackerEvent> tracker_; //new
   bool applyVertexCut_;
   
+  //new
+ // const std::string propagatorOpposite_;
+  //const std::string estimatorName_;
+ // edm::ESHandle<Propagator> thePropagatorOpposite;
+  ///edm::ESHandle<Chi2MeasurementEstimatorBase> theEstimator;
+  const TrackerTopology*                trackerTopology_;
+  const Propagator*                     trackerPropagator_;
+  const MeasurementEstimator*           chi2MeasurementEstimator_;
 };
 
 SiPixelPhase1TrackEfficiency::SiPixelPhase1TrackEfficiency(const edm::ParameterSet& iConfig) :
-  SiPixelPhase1Base(iConfig) 
-{ 
+  SiPixelPhase1Base(iConfig)//,
+  //propagatorOpposite_(iConfig.getParameter<std::string>("PropagatorOpposite")),//new
+ // estimatorName_(iConfig.getParameter<std::string>("Chi2MeasurementEstimator"))  //new
+{
+  tracker_ = consumes<MeasurementTrackerEvent>(iConfig.getParameter<edm::InputTag>("tracker")); 
   tracksToken_ = consumes<reco::TrackCollection>(iConfig.getParameter<edm::InputTag>("tracks"));
   vtxToken_ = consumes<reco::VertexCollection>(iConfig.getParameter<edm::InputTag>("primaryvertices"));
   applyVertexCut_=iConfig.getUntrackedParameter<bool>("VertexCut",true);
-
+  trajTrackCollectionToken_ = consumes<TrajTrackAssociationCollection>(iConfig.getParameter<edm::InputTag>("trajectoryInput"));//new
 }
 
 void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup) {
@@ -70,6 +90,122 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
   // get primary vertex
   edm::Handle<reco::VertexCollection> vertices;
   iEvent.getByToken( vtxToken_, vertices);
+
+  // TrackerTopology for module informations
+  edm::ESHandle<TrackerTopology> trackerTopologyHandle;
+  iSetup.get<TrackerTopologyRcd>().get(trackerTopologyHandle);
+  trackerTopology_ = trackerTopologyHandle.product();
+
+  // Tracker propagator for propagating tracks to other layers
+  edm::ESHandle<Propagator> propagatorHandle;
+  iSetup.get<TrackingComponentsRecord>().get("PropagatorWithMaterial", propagatorHandle);
+  std::unique_ptr<Propagator> propagatorUniquePtr(propagatorHandle.product() -> clone());
+  trackerPropagator_ = propagatorUniquePtr.get();
+  const_cast<Propagator*>(trackerPropagator_) -> setPropagationDirection(oppositeToMomentum);
+
+  // Measurement estimator
+  edm::ESHandle<Chi2MeasurementEstimatorBase> chi2MeasurementEstimatorHandle;
+  iSetup.get<TrackingComponentsRecord>().get("Chi2", chi2MeasurementEstimatorHandle);
+  chi2MeasurementEstimator_ = chi2MeasurementEstimatorHandle.product();
+
+  //new
+  edm::Handle<TrajTrackAssociationCollection>  trajTrackCollectionHandle;
+  iEvent.getByToken(trajTrackCollectionToken_, trajTrackCollectionHandle);
+  
+  edm::Handle<MeasurementTrackerEvent> trackerMeas;
+  iEvent.getByToken(tracker_, trackerMeas);
+
+  //iSetup.get<TrackingComponentsRecord>().get(estimatorName_, theEstimator);
+  //iSetup.get<TrackingComponentsRecord>().get(propagatorOpposite_, thePropagatorOpposite);
+ 
+
+////////////////////////////////////////////////////////////////////////////////////////// 
+  for(const auto &pair: *trajTrackCollectionHandle) {
+    const edm::Ref<std::vector<Trajectory>> traj = pair.key;
+    const reco::TrackRef tracki                   = pair.val;
+
+    //const auto& trajectoryMeasurements = traj -> measurements();
+
+     TrajectoryStateOnSurface tsosPXB2;
+        for (const auto &tm : traj->measurements()) {
+            if (tm.recHit().get() && tm.recHitR().isValid()) {
+                DetId where = tm.recHitR().geographicalId();
+                int  source_det_ = where.subdetId();
+                int  source_layer_ = trackerTopology_ -> pxbLayer(where);
+                int source_det2 = trackerTopology_->layer(where);
+                /*if (source_det_ != PixelSubdetector::SubDetector::PixelBarrel ||  source_layer_ != 1) {
+                    tsosPXB2 = tm.updatedState().isValid() ? tm.updatedState() : tm.backwardPredictedState();
+                    break;
+                }*/
+                if(source_det_ == PixelSubdetector::SubDetector::PixelBarrel ) {
+ 			std::cout << "Pixel Barrel " << source_det_ << "  " << source_layer_ << "  " << source_det2 << std::endl; 
+		}
+                if(source_det_ == PixelSubdetector::SubDetector::PixelEndcap ) {
+                        std::cout << "Pixel Endcap " << source_det_ << "  " << source_layer_ << "  " << source_det2 << std::endl;
+                }
+                if(source_det_ == StripSubdetector::SubDetector::TIB ) {
+                        std::cout << "TIB " << source_det_ << "  " << source_layer_ << "  " << source_det2 << std::endl;
+                }
+                if(source_det_ == StripSubdetector::SubDetector::TOB ) {
+                        std::cout << "TOB " << source_det_ << "  " << source_layer_ << "  " << source_det2 << std::endl;
+                }
+                if(source_det_ == StripSubdetector::SubDetector::TID ) {
+                        std::cout << "TID " << source_det_ << "  " << source_layer_ << "  " << source_det2 << std::endl;
+                }
+                if(source_det_ == StripSubdetector::SubDetector::TEC ) {
+                        std::cout << "TEC " << source_det_ << "  " << source_layer_ << "  " << source_det2 << std::endl;
+                }
+                if (!(source_det_ == PixelSubdetector::SubDetector::PixelBarrel &&  source_layer_ == 1)) {
+                      tsosPXB2 = tm.updatedState().isValid() ? tm.updatedState() : tm.backwardPredictedState();
+                      //break;
+                      std::cout << "starting state on det " << source_det_ << "layer " << source_layer_ << "r = " << tsosPXB2.globalPosition().perp() << "z = " << tsosPXB2.globalPosition().z() << std::endl;
+                }
+            }
+        }
+        if (!tsosPXB2.isValid()) std::cout << "WARNING: did not find state for PXB2 Hit" << std::endl;
+        if (!tsosPXB2.isValid()) continue; // for now
+	
+	const GeometricSearchTracker * gst = trackerMeas->geometricSearchTracker();
+        //const auto & PXBLs = gst->pixelBarrelLayers();
+        //        //for (const auto * PXBLayer : PXBLs) { std::cout << "PXB Layer with radius = " << PXBLayer->specificSurface().radius() << std::endl; }
+        const auto *pxbLayer1 = gst->pixelBarrelLayers().front();
+        auto compDets = pxbLayer1->compatibleDets(tsosPXB2, *trackerPropagator_, *chi2MeasurementEstimator_);
+        for (const auto & detAndState : compDets) {
+	             bool isHitValid   = false;
+                     bool isHitMissing = false;
+                     bool isHitInactive = false;
+                     std::cout<<detAndState.second.localPosition().x()<<"   "<<detAndState.second.localPosition().y()<<std::endl;
+                     const auto &mdet = trackerMeas->idToDet(detAndState.first->geographicalId());
+                     const auto & allhits = mdet.recHits(detAndState.second);
+                     std::cout << "Global position debug: x = " << detAndState.second.globalPosition().x() << " y = " <<detAndState.second.globalPosition().y() << " z = " << detAndState.second.globalPosition().z() <<  std::endl;
+                     for (const auto & hit : allhits) { 
+                    	float distance = std::hypot(std::abs(hit->localPosition().x()-detAndState.second.localPosition().x()), std::abs(hit->localPosition().y()-detAndState.second.localPosition().y()));		        std::cout << "Distance from hit " << distance << std::endl;
+		        // Efficiency cut should eta-dependent and maybe with cluster instead of hit
+		        if(std::abs(hit->localPosition().x()-detAndState.second.localPosition().x()) < 0.02 && std::abs(hit->localPosition().y()-detAndState.second.localPosition().y()) < 0.03 ){
+				std::cout <<  "Hit found!!!" << std::endl;
+	                        isHitValid   = hit->getType()==TrackingRecHit::valid;
+			}else{
+				isHitMissing = true;
+			}
+		     }
+                     if ( (detAndState.first->geographicalId().subdetId() == PixelSubdetector::PixelBarrel && trackerTopology_ -> pxbLayer(detAndState.first->geographicalId()) == 1) ){
+    			 if (isHitValid)   {
+			        histo[VALID].fill(detAndState.first->geographicalId(), &iEvent);
+        			histo[EFFICIENCY].fill(1, detAndState.first->geographicalId(), &iEvent);
+      			}
+      			if (isHitMissing) {
+        			histo[MISSING].fill(detAndState.first->geographicalId(), &iEvent);
+        			histo[EFFICIENCY].fill(0, detAndState.first->geographicalId(), &iEvent);
+      			}
+      			if (isHitInactive)   {
+        			histo[INACTIVE].fill(detAndState.first->geographicalId(), &iEvent);
+      			}
+        	     }
+         }
+
+        
+
+}///////////////////////////////////////////////////////////////////////////////////////////////////
 
   if (!vertices.isValid()) return;
 
@@ -86,6 +222,7 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
   if (!tracks.isValid()) return;
 
   for (auto const & track : *tracks) {
+   // std::cout<<track.innerDetId()<<std::endl;
 
     //this cut is needed to be consisten with residuals calculation
     if (applyVertexCut_ && (track.pt() < 0.75 || std::abs( track.dxy(vertices->at(0).position()) ) > 5*track.dxyError())) continue; 
@@ -117,126 +254,18 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
 
     if (!isBpixtrack && !isFpixtrack) continue;
 
-    //check all the hits
-    std::vector< bool > SubDetCheckerBool = {false, false, false, false, false, false, false};
-
-    for(unsigned int h=0;h<track.recHitsSize();h++){ ///check the location of all the hits
-      auto hit = *(hb+h);
-      DetId id = hit->geographicalId();
-
-      bool isHitValid   = hit->getType()==TrackingRecHit::valid;
-      if (isHitValid){
-      if (id() >= 303042564 && id() <= 303087648) SubDetCheckerBool.at(0) = true;  //Layer1               
-      if (id() >= 304091140 && id() <= 304201760) SubDetCheckerBool.at(1) = true;  //Layer2                                                                       
-      if (id() >= 305139716 && id() <= 305315872) SubDetCheckerBool.at(2) = true;  //Layer3                                                                      
-      if (id() >= 306188292 && id() <= 306446368) SubDetCheckerBool.at(3) = true;  //Layer4                                                     
-      if ((id() >= 344200196 && id() <= 344426500) || (id() >= 352588804 && id() <= 352815108)) SubDetCheckerBool.at(4) = true;  //Disk1       
-      if ((id() >= 344462340 && id() <= 344688644) || (id() >= 352588804 && id() <= 352815108)) SubDetCheckerBool.at(5) = true;  //Disk2                     
-      if ((id() >= 344724484 && id() <= 344950788) || (id() >= 353113092 && id() <= 353339396)) SubDetCheckerBool.at(6) = true;  //Disk3                          
-      }
-    }
-
-
     // then, look at each hit
     for(unsigned int h=0;h<track.recHitsSize();h++){
       auto hit = *(hb+h);
 
       DetId id = hit->geographicalId();
       uint32_t subdetid = (id.subdetId());
-
-      //Check the location of this hit
-      std::vector< bool > hitCheckerBool = {false, false, false, false, false, false, false};
-
-      if (id() >= 303042564 && id() <= 303087648) hitCheckerBool.at(0) = true;
-      if (id() >= 304091140 && id() <= 304201760) hitCheckerBool.at(1) = true;
-      if (id() >= 305139716 && id() <= 305315872) hitCheckerBool.at(2) = true;
-      if (id() >= 306188292 && id() <= 306446368) hitCheckerBool.at(3) = true;
-      if ((id() >= 344200196 && id() <= 344426500) || (id() >= 352588804 && id() <= 352815108)) hitCheckerBool.at(4) = true;  //Disk1                       
-      if ((id() >= 344462340 && id() <= 344688644) || (id() >= 352588804 && id() <= 352815108)) hitCheckerBool.at(5) = true;  //Disk2                        
-      if ((id() >= 344724484 && id() <= 344950788) || (id() >= 353113092 && id() <= 353339396)) hitCheckerBool.at(6) = true;  //Disk3                          
-
-
-
       if (   subdetid != PixelSubdetector::PixelBarrel 
           && subdetid != PixelSubdetector::PixelEndcap) continue;
 
       bool isHitValid   = hit->getType()==TrackingRecHit::valid;
       bool isHitMissing = hit->getType()==TrackingRecHit::missing;
       bool isHitInactive = hit->getType()==TrackingRecHit::inactive;
-
-      // Hp cut
-      int TRACK_QUALITY_HIGH_PURITY_BIT = 2;
-      int TRACK_QUALITY_HIGH_PURITY_MASK = 1 << TRACK_QUALITY_HIGH_PURITY_BIT;
-      if(!((track.qualityMask() & TRACK_QUALITY_HIGH_PURITY_MASK) >> TRACK_QUALITY_HIGH_PURITY_BIT)) 
-	{
-	  isHitValid = false;
-
-	}
-
-      //Pt cut
-      float TRACK_PT_CUT_VAL = 1.0f;
-      if(!(TRACK_PT_CUT_VAL < track.pt()))
-	{
-	  isHitValid = false;
-
-	}
-
-      //Nstrip cut
-      int TRACK_NSTRIP_CUT_VAL = 10;
-      if(!(TRACK_NSTRIP_CUT_VAL < nStripHits))
-	{
-	  isHitValid = false;
-
-	}
-
-      //Apply pixel hit cuts
-      if (hitCheckerBool.at(0) == true) if (!( //layer1
-      					      (SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(3) == true) ||
-      					      (SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(4) == true) || 
-      					      (SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true) ||
-                                              (SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true && SubDetCheckerBool.at(6) == true)))
-      					  {
-					    isHitValid = false;
-      					  }
-      if (hitCheckerBool.at(1) == true) if (!( //layer2                                                                                   
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(3) == true) ||
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(2) == true && SubDetCheckerBool.at(4) == true) ||
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true)))
-      					  {
-      					    isHitValid = false;
-      					  }
-      if (hitCheckerBool.at(3) == true) if (!( //layer3                                                                                                            
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(3) == true) ||
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(4) == true)))
-                                          {
-					    isHitValid = false;
-                                          }
-
-      if (hitCheckerBool.at(3) == true) if (!( //layer4                                                                                                           
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true)))
-					  {
-					    isHitValid = false;
-                                          }
-
-      if (hitCheckerBool.at(4) == true) if (!( //Disk1                                                                                                            
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(2) == true) ||
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(5) == true) ||
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(5) == true && SubDetCheckerBool.at(6) == true)))
-                                          {
-                                            isHitValid = false;
-                                          }
-      if (hitCheckerBool.at(5) == true) if (!( //Disk2                                                                                                            
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(1) == true && SubDetCheckerBool.at(1) == true) ||
-                                              (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(6) == true)))
-                                          {
-					    isHitValid = false;
-                                          }
-      if (hitCheckerBool.at(6) == true) if (!( //Disk3                                                                                                    
-      					      (SubDetCheckerBool.at(0) == true && SubDetCheckerBool.at(4) == true && SubDetCheckerBool.at(5) == true)))
-                                          {
-					    isHitValid = false;
-                                          }
-
 
       /*
       const SiPixelRecHit* pixhit = dynamic_cast<const SiPixelRecHit*>(hit);
@@ -257,9 +286,11 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
       int col = (int) mp.y();
       */
 
-      if (isHitValid)   {
-        histo[VALID].fill(id, &iEvent);
-        histo[EFFICIENCY].fill(1, id, &iEvent);
+      if ( !(subdetid == PixelSubdetector::PixelBarrel && trackerTopology_ -> pxbLayer(id) == 1) ){
+
+     if (isHitValid)   {
+       	histo[VALID].fill(id, &iEvent);
+       	histo[EFFICIENCY].fill(1, id, &iEvent);
       }
       if (isHitMissing) {
         histo[MISSING].fill(id, &iEvent);
@@ -268,6 +299,7 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
       if (isHitInactive)   {
         histo[INACTIVE].fill(id, &iEvent);
       }
+	}
     }
   }
   histo[VALID   ].executePerEventHarvesting(&iEvent);
@@ -278,4 +310,3 @@ void SiPixelPhase1TrackEfficiency::analyze(const edm::Event& iEvent, const edm::
 } // namespace
 
 DEFINE_FWK_MODULE(SiPixelPhase1TrackEfficiency);
-
